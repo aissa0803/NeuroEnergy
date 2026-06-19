@@ -87,7 +87,6 @@ Each layer type maps to a specific table. For Conv2d, the kernel size and paddin
 | `nn.Conv2d(kernel=5, padding=0)` | `conv_k5_p0` | `conv_k5_p0_power_report.xlsx` |
 | `nn.Conv2d(kernel=5, padding=1)` | `conv_k5_p1` | `conv_k5_p1_power_report.xlsx` |
 
-CoralDevBoard only has linear measurements; JetsonNano has both linear and Conv2d.
 
 ### 3. Bilinear interpolation
 
