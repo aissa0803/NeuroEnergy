@@ -1,6 +1,6 @@
 # NeuroEnergy — AI Model Energy Estimation Tool
 
-A Streamlit web platform for estimating the energy consumption of PyTorch neural networks on embedded hardware boards (JetsonNano, CoralDevBoard).
+A web platform for estimating the energy consumption of PyTorch neural networks on embedded hardware boards (JetsonNano, CoralDevBoard).
 
 ---
 
@@ -35,8 +35,31 @@ energy_estimation/
 
 ## How to run
 
+**1. Install uv** (if not already installed)
 ```bash
-pip install -r requirements.txt
+pip install uv
+```
+
+**2. Create and activate the virtual environment**
+```bash
+uv venv .venv
+```
+On Windows:
+```bash
+.venv\Scripts\activate
+```
+On macOS/Linux:
+```bash
+source .venv/bin/activate
+```
+
+**3. Install dependencies**
+```bash
+uv pip install -r requirements.txt
+```
+
+**4. Run the app**
+```bash
 streamlit run app.py
 ```
 
