@@ -33,6 +33,12 @@ energy_estimation/
 
 ---
 
+## Screenshot
+
+![NeuroEnergy Platform](logo/neuroenergy.PNG)
+
+---
+
 ## How to run
 
 **1. Install uv** (if not already installed)
