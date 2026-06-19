@@ -1,0 +1,25 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# IDE & tool-local config
+.vscode/
+.idea/
+.claude/
+
+# Test model binaries (not source code)
+test_model/
+
+# Stale root-level data file (real data lives in energy_estimator/data/)
+linear_power_report.xlsx
+
+# OS
+.DS_Store
+Thumbs.db
