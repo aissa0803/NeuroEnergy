@@ -14,11 +14,9 @@ __pycache__/
 .idea/
 .claude/
 
-# Test model binaries (not source code)
-test_model/
 
 # Stale root-level data file (real data lives in energy_estimator/data/)
-linear_power_report.xlsx
+/linear_power_report.xlsx
 
 # OS
 .DS_Store
