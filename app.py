@@ -12,11 +12,15 @@ from energy_estimator.layer_energy_interpolation import estimate_energy
 
 
 # ─── Session state ────────────────────────────────────────────────────────────
+# Streamlit reruns the entire script on every user interaction, so the layer
+# list and the ID counter must live in session_state to survive reruns.
 
 def init_state():
     if "layers" not in st.session_state:
         st.session_state.layers = []
     if "next_id" not in st.session_state:
+        # Monotonically increasing counter — ensures each layer has a unique key
+        # even after deletions (prevents Streamlit widget key collisions).
         st.session_state.next_id = 1
 
 
@@ -26,6 +30,11 @@ def reset_layers():
 
 
 def get_last_output_dim(default: int = 256) -> int:
+    """Return the output dimension of the most recently added layer.
+
+    Used to auto-wire the input dimension of a new Linear layer so the user
+    does not have to set it manually for common feed-forward stacks.
+    """
     layers = st.session_state.get("layers", [])
     if not layers:
         return default
@@ -33,12 +42,16 @@ def get_last_output_dim(default: int = 256) -> int:
     if last["type"] == "Linear":
         return int(last["output dimension"])
     if last["type"] == "Conv2d":
+        # For Conv2d the channel count plays the role of the "width" dimension
+        # that a following Linear layer would receive (after global pooling etc.).
         return int(last["cout"])
     return default
 
 
 def add_linear(input_dim: int | None = None, output_dim: int = 1024):
     if input_dim is None:
+        # Automatically chain to the previous layer's output when no explicit
+        # input dimension is given.
         input_dim = get_last_output_dim(default=256)
     i = st.session_state.next_id
     st.session_state.next_id += 1
@@ -55,6 +68,7 @@ def add_linear(input_dim: int | None = None, output_dim: int = 1024):
 def add_conv2d():
     i = st.session_state.next_id
     st.session_state.next_id += 1
+    # Defaults mirror a typical first conv layer: RGB input (cin=3), 3×3 kernel.
     st.session_state.layers.append({
         "id": i,
         "type": "Conv2d",
@@ -75,9 +89,18 @@ def remove_layer(layer_id: int):
 # ─── Model loading ────────────────────────────────────────────────────────────
 
 def extract_layers_from_model(uploaded_file) -> list[dict]:
+    """Parse a PyTorch checkpoint and return a list of layer descriptors.
+
+    Supports both raw state_dicts and checkpoint dicts that wrap the state_dict
+    under a "state_dict" key (common when saving with torch.save({...})).
+    Only weight tensors are inspected; bias and other parameters are skipped
+    because they don't change the layer dimensions.
+    """
     uploaded_file.seek(0)
+    # map_location="cpu" avoids CUDA dependency on the server running Streamlit.
     obj = torch.load(uploaded_file, map_location="cpu")
 
+    # Accept both a plain state_dict and a training checkpoint dict.
     state_dict = obj.get("state_dict", obj) if isinstance(obj, dict) else obj
     if not isinstance(state_dict, dict):
         raise ValueError("File does not contain a valid state_dict.")
@@ -86,6 +109,7 @@ def extract_layers_from_model(uploaded_file) -> list[dict]:
     layer_id = 1
 
     for name, tensor in state_dict.items():
+        # Skip non-weight entries (biases, BatchNorm stats, etc.).
         if not torch.is_tensor(tensor) or not name.endswith(".weight"):
             continue
 
@@ -93,6 +117,7 @@ def extract_layers_from_model(uploaded_file) -> list[dict]:
         layer_name = name.replace(".weight", "")
 
         if len(shape) == 2:
+            # Linear weight shape: (out_features, in_features)
             out_features, in_features = shape
             layers.append({
                 "id": layer_id,
@@ -105,6 +130,7 @@ def extract_layers_from_model(uploaded_file) -> list[dict]:
             layer_id += 1
 
         elif len(shape) == 4:
+            # Conv2d weight shape: (out_channels, in_channels, kH, kW)
             out_channels, in_channels, kh, kw = shape
             layers.append({
                 "id": layer_id,
@@ -114,6 +140,8 @@ def extract_layers_from_model(uploaded_file) -> list[dict]:
                 "cout": int(out_channels),
                 "kh": int(kh),
                 "kw": int(kw),
+                # Padding cannot be recovered from the weight tensor alone;
+                # default to 0 and let the user correct it if needed.
                 "padding": 0,
                 "pruning_rate": 0.0,
             })
@@ -127,6 +155,12 @@ def extract_layers_from_model(uploaded_file) -> list[dict]:
 # ─── Energy helpers ───────────────────────────────────────────────────────────
 
 def get_layer_key(layer: dict) -> str:
+    """Build the lookup key used by the energy interpolator.
+
+    Linear layers always map to "linear". Conv2d layers are keyed by kernel
+    size and padding because the energy profile differs per configuration
+    (e.g. "conv_k3_p0" vs "conv_k3_p1").
+    """
     if layer["type"] == "Linear":
         return "linear"
     k = int(layer["kh"])
@@ -135,6 +169,11 @@ def get_layer_key(layer: dict) -> str:
 
 
 def get_in_out_dim(layer: dict) -> tuple[int, int]:
+    """Return (input_dim, output_dim) in a layer-type–agnostic way.
+
+    For Conv2d layers the channel counts (cin, cout) serve as the dimensions
+    that drive the energy estimate.
+    """
     if layer["type"] == "Linear":
         return int(layer["input dimension"]), int(layer["output dimension"])
     return int(layer["cin"]), int(layer["cout"])
@@ -143,6 +182,7 @@ def get_in_out_dim(layer: dict) -> tuple[int, int]:
 # ─── Charts ───────────────────────────────────────────────────────────────────
 
 def plot_per_layer(res: pd.DataFrame, unit: str):
+    """Horizontal bar chart showing the energy consumed by each layer."""
     fig = go.Figure(go.Bar(
         x=res["Used Energy"],
         y=res["Name"],
@@ -161,6 +201,7 @@ def plot_per_layer(res: pd.DataFrame, unit: str):
 
 
 def plot_cumulative(res: pd.DataFrame, unit: str):
+    """Line chart of cumulative energy across layers (running total)."""
     fig = go.Figure(go.Scatter(
         x=res["Name"],
         y=res["Used Energy"].cumsum(),
@@ -186,9 +227,10 @@ st.title("NeuroEnergy — AI Model Energy Estimation Tool")
 
 init_state()
 
-# Sidebar
+# ── Sidebar controls ──────────────────────────────────────────────────────────
 st.sidebar.image(_LOGO, width=250)
 
+# The selected board determines which energy lookup tables are used.
 board = st.sidebar.selectbox("Hardware board", list_boards())
 
 st.sidebar.header("Add layers")
@@ -206,6 +248,7 @@ if st.sidebar.button("Load layers from model"):
     try:
         layers = extract_layers_from_model(uploaded_model)
         st.session_state.layers = layers
+        # Set next_id past the last loaded layer so new additions don't collide.
         st.session_state.next_id = len(layers) + 1
         st.sidebar.success(f"Loaded {len(layers)} layers.")
         st.rerun()
@@ -216,7 +259,7 @@ if st.sidebar.button("Clear architecture"):
     reset_layers()
     st.rerun()
 
-# Architecture editor
+# ── Architecture editor ───────────────────────────────────────────────────────
 st.subheader("Architecture")
 
 if not st.session_state.layers:
@@ -224,6 +267,8 @@ if not st.session_state.layers:
 else:
     for layer in st.session_state.layers:
         with st.container(border=True):
+            # Layer header row: name, type badge, pruning rate, delete button.
+            # The layer dict is mutated in-place; Streamlit persists it via session_state.
             top = st.columns([2, 2, 2, 3, 1])
             layer["name"] = top[0].text_input("Name", layer["name"], key=f"name_{layer['id']}")
             top[1].write(f"**Type:** {layer['type']}")
@@ -236,6 +281,7 @@ else:
                 remove_layer(layer["id"])
                 st.rerun()
 
+            # Layer-type–specific dimension controls rendered below the header.
             if layer["type"] == "Linear":
                 col = st.columns(4)
                 layer["input dimension"] = col[0].number_input(
@@ -257,7 +303,7 @@ else:
 
 st.divider()
 
-# Energy estimation
+# ── Energy estimation ─────────────────────────────────────────────────────────
 st.subheader("Energy estimation")
 
 if st.button("Estimate energy", type="primary"):
@@ -272,9 +318,14 @@ if st.button("Estimate energy", type="primary"):
                 raise ValueError(f"'{layer_key}' not available on {board}. Available: {available_keys}")
 
             in_dim, out_dim = get_in_out_dim(layer)
+
+            # Clamp pruning rate to [0, 1] in case of stale or invalid state.
             p = max(0.0, min(1.0, float(layer.get("pruning_rate", 0.0))))
+            # Effective output dimension after pruning: pruned neurons cost no energy.
             eff_out = out_dim * (1.0 - p)
 
+            # E_dense: energy if the layer were fully unpruned (baseline reference).
+            # E_used:  energy of the actually active (non-pruned) neurons.
             E_dense = float(estimate_energy(board, layer_key, in_dim, out_dim))
             E_used  = float(estimate_energy(board, layer_key, in_dim, eff_out))
             total_energy += E_used
@@ -290,10 +341,12 @@ if st.button("Estimate energy", type="primary"):
             })
 
         except Exception as e:
+            # Collect errors without aborting the rest of the estimation.
             errors.append({"name": layer.get("name", "?"), "error": str(e)})
 
     if rows:
         res = pd.DataFrame(rows)
+        # Convert raw Joule values to the display unit chosen in the sidebar.
         scale, unit = (1000.0, "mJ") if units == "mJoules" else (1.0, "J")
         res["Dense Energy"] *= scale
         res["Used Energy"]  *= scale
